@@ -58,6 +58,9 @@ if [ ! -d "$LK_DIR" ];then
     pr_fatal "LK wasn't found at $LK_DIR"
 fi
 
+LK_BINARY="$LK_OUT/build-$LK_TARGET/lk.bin"
+LK_BINARY_FINAL="$LK_OUT/lk_final.bin"
+
 # optional arguments
 LK_MKBOOTIMG_ADDITIONAL_FLAGS=""
 
@@ -74,6 +77,51 @@ if [ ! -z "$BOOTIMG_DT" ];then
 
     LK_MKBOOTIMG_ADDITIONAL_FLAGS="$LK_MKBOOTIMG_ADDITIONAL_FLAGS --dt $DTIMG_PATCHED"
 fi
+
+GenerateKernelHeader() {
+    C="$LK_OUT/tmp.c"
+    BIN="$LK_OUT/tmp"
+    KERNEL_SIZE="$1"
+    HEADER_OUT="$2"
+
+    # generate C file
+    echo "#include <unistd.h>" > "$C"
+    echo "#include <stdint.h>" >> "$C"
+    echo "int main(void){int i;uint32_t n;" >> "$C"
+    echo "n=0xea00000a; write(1, &n, sizeof(n));" >> "$C"   # b 0x30
+    echo "for(i=0;i<8;i++)" >> "$C"
+    echo "{n=0xe1a00000; write(1, &n, sizeof(n));}" >> "$C" # NOP
+    echo "n=0x016f2818; write(1, &n, sizeof(n));" >> "$C"   # Magic numbers to help the loader
+    echo "n=0x00000000; write(1, &n, sizeof(n));" >> "$C"   # absolute load/run zImage address
+    echo "n=$KERNEL_SIZE; write(1, &n, sizeof(n));" >> "$C" # zImage end address
+    echo "return 0;" >> "$C"
+    echo "}" >> "$C"
+
+    # compile C file
+    gcc -Wall -Wextra -Wshadow -Werror "$C" -o "$BIN"
+
+    # write header
+    "$BIN" >> "$HEADER_OUT"
+}
+
+GenerateKernelImg() {
+    if [ ! -z "$BOOTIMG_APPENDED_FDT" ];then
+        # header + LK
+        LK_SIZE="$(( 0x30 + $(stat -L -c %s $LK_BINARY) ))"
+
+        # write header
+        rm -f "$LK_BINARY_FINAL"
+        GenerateKernelHeader "$LK_SIZE" "$LK_BINARY_FINAL"
+
+        # write LK
+        cat "$LK_BINARY" >> "$LK_BINARY_FINAL"
+
+        # write fdt
+        cat "$BOOTIMG_APPENDED_FDT" >> "$LK_BINARY_FINAL"
+    else
+        cp "$LK_BINARY" "$LK_BINARY_FINAL"
+    fi
+}
 
 GeneratePatchedDtImg() {
     if [ ! -z "$BOOTIMG_DT" ];then
@@ -110,6 +158,7 @@ fi
 CompileLK() {
     mkdir -p "$LK_OUT"
     "$EFIDROID_SHELL" -c "$LK_ENV \"$MAKEFORWARD\" \"$EFIDROID_MAKE\" -C \"$LK_DIR\" $LK_TARGET"
+    GenerateKernelImg
 }
 
 CompileLKEDK2() {
@@ -131,14 +180,24 @@ CompileLKEDK2() {
     # compile C file
     gcc -Wall -Wextra -Wshadow -Werror "$C" -o "$BIN"
 
+    # TODO: header
+    if [ ! -z "$BOOTIMG_APPENDED_FDT" ];then
+        true
+    fi
+
     # write LK
-    cp "$LK_OUT/build-$LK_TARGET/lk.bin" "$LKEDK2BIN"
+    cp "$LK_BINARY" "$LKEDK2BIN"
 
     # write size
     "$BIN" >> "$LKEDK2BIN"
 
     # write EDK2
     cat "$EDK2_BIN" >> "$LKEDK2BIN"
+
+    # appended fdt
+    if [ ! -z "$BOOTIMG_APPENDED_FDT" ];then
+        cat "$BOOTIMG_APPENDED_FDT" >> "$LKEDK2BIN"
+    fi
 }
 
 CompileLKSideload() {
@@ -182,6 +241,7 @@ DistClean() {
 CompileLKNoUEFI() {
     mkdir -p "$LK_OUT"
     "$EFIDROID_SHELL" -c "$LK_ENV_NOUEFI \"$MAKEFORWARD\" \"$EFIDROID_MAKE\" -C \"$LK_DIR\" $LK_TARGET"
+    GenerateKernelImg
 }
 
 CompileLKSideloadNoUEFI() {
@@ -190,7 +250,7 @@ CompileLKSideloadNoUEFI() {
     pr_alert "Installing: $TARGET_OUT/lk_nouefi_sideload.img"
     set -x
 	"$HOST_MKBOOTIMG_OUT/mkbootimg" \
-		--kernel "$LK_OUT/build-$LK_TARGET/lk.bin" \
+		--kernel "$LK_BINARY_FINAL" \
 		--ramdisk /dev/null \
 		--base "$BOOTIMG_BASE" \
 		$LK_MKBOOTIMG_ADDITIONAL_FLAGS \
