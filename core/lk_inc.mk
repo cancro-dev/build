@@ -26,10 +26,20 @@ DEFINES := $(filter-out WITH_DEBUG_LOG_BUF=1,$(DEFINES))
 # set debug level
 DEBUG := 1
 
+# add our modules
+MODULES += \
+    $(EFIDROID_TOP)/uefi/lkmodules/shared/fastboot \
+    $(EFIDROID_TOP)/uefi/lkmodules/shared/lib/base64 \
+    $(EFIDROID_TOP)/uefi/lkmodules/shared/lib/atagparse
+
+DEFINES += WITH_FASTBOOT_EXT=1
+DEFINES += WITH_LIB_BASE64=1
+DEFINES += WITH_LIB_ATAGPARSE=1
+
 ifeq ($(WITH_KERNEL_UEFIAPI),1)
     # add our modules
     MODULES += \
-	    $(EFIDROID_TOP)/uefi/lkmodules/uefiapi
+	    $(EFIDROID_TOP)/uefi/lkmodules/shared/uefiapi
 
     # enable the UEFIAPI
     DEFINES += WITH_KERNEL_UEFIAPI=1
@@ -37,6 +47,16 @@ ifeq ($(WITH_KERNEL_UEFIAPI),1)
     DEFINES += LCD_DENSITY=$(LCD_DENSITY)
     DEFINES += LCD_VRAM_SIZE=$(LCD_VRAM_SIZE)
     CFLAGS += -DDEVICE_NVVARS_PARTITION=\"$(DEVICE_NVVARS_PARTITION)\"
+
+    # remove apps
+    MODULES := $(filter-out app/aboot,$(MODULES))
+    MODULES := $(filter-out app/clocktests,$(MODULES))
+    MODULES := $(filter-out app/nandwrite,$(MODULES))
+    MODULES := $(filter-out app/pcitests,$(MODULES))
+    MODULES := $(filter-out app/rpmbtests,$(MODULES))
+    MODULES := $(filter-out app/shell,$(MODULES))
+    MODULES := $(filter-out app/stringtests,$(MODULES))
+    MODULES := $(filter-out app/tests,$(MODULES))
 
     # disable LK debugging
     DEBUG := 0
@@ -78,6 +98,17 @@ endif
 
 ifeq ($(WITH_DEBUG_LAST_KMSG),1)
     CFLAGS += -DWITH_DEBUG_LAST_KMSG=1
+endif
+
+ifeq ($(WITH_KERNEL_UEFIAPI),1)
+    ifeq ($(DEBUG_ENABLE_UEFI_FBCON),1)
+        # enable FBCON
+        DEFINES += WITH_DEBUG_FBCON=1
+
+        CFLAGS += -DDEBUG_ENABLE_UEFI_FBCON=1
+    else
+        CFLAGS += -DDEBUG_ENABLE_UEFI_FBCON=0
+    endif
 endif
 
 DEFINES += EFIDROID_SAFEBOOT=1
